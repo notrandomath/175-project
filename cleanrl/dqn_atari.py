@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.nn.utils.prune as prune
 import torch.optim as optim
 import tyro
 from stable_baselines3.common.atari_wrappers import (
@@ -32,6 +33,10 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = True
     """if toggled, cuda will be enabled by default"""
+    prune: bool = False
+    """if toggled, will prune the model for three times"""
+    prune_amount: float = 0.0
+    """if toggled, will prune the model for three times"""
     track: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "cleanRL"
@@ -128,6 +133,38 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     slope = (end_e - start_e) / duration
     return max(slope * t + start_e, end_e)
 
+def save_efficiently(name: str, suffix: str, model: nn.Module):
+    sparse_weights = {}
+    for idx, module in enumerate(model.network):
+        if isinstance(module, (nn.Conv2d, nn.Linear)):
+            weight = module.weight
+            sparse_weight = weight.to_sparse()
+            sparse_weights[f'layer_{idx}_weights'] = sparse_weight
+    torch.save(sparse_weights, f'{name}_{suffix}')
+
+def apply_pruning(name: str, model: nn.Module, prune_amount: float):
+    print(f"Saving old model {name}...")
+    save_efficiently(name, 'before', model)
+    print(f"Prune Amount: {prune_amount}")
+    # get all relevant layers while ignoring ReLU and Flatten
+    params_to_prune = [(module, 'weight') for module in model.network if isinstance(module, (nn.Conv2d, nn.Linear))]
+    print(f"Total non-zero parameters (before pruning) in {name}: {sum(torch.sum(module.weight != 0).item() for module, _ in params_to_prune)}")
+    # prune globally with sparsity ratio
+    prune.global_unstructured(params_to_prune, pruning_method=prune.L1Unstructured, amount=prune_amount)
+    # remove weights to prevent 
+    print(f"Total non-zero parameters (after pruning) in {name}: {sum(torch.sum(module.weight != 0).item() for module, _ in params_to_prune)}")
+
+def remove_pruning(model: nn.Module):
+    for module in model.network:
+        if isinstance(module, (nn.Conv2d, nn.Linear)) and hasattr(module, 'weight_mask'):
+            prune.remove(module, 'weight')
+
+def compare_sizes(name: str, model: nn.Module):
+    save_efficiently(name, 'after', model)
+    print(f'Before pruning size of {name}: {os.path.getsize(f"{name}_before") / (1024 ** 2):.2f} MB')    
+    print(f'After pruning size of {name}: {os.path.getsize(f"{name}_after") / (1024 ** 2):.2f} MB')  
+    os.remove(f'{name}_before')
+    os.remove(f'{name}_after')
 
 if __name__ == "__main__":
     import stable_baselines3 as sb3
@@ -192,6 +229,11 @@ poetry run pip install "stable_baselines3==2.0.0a1" "gymnasium[atari,accept-rom-
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.seed)
     for global_step in range(args.total_timesteps):
+        if args.prune and global_step != 0 and global_step % (args.total_timesteps // 2) == 0:
+            print('applying pruning...')
+            apply_pruning('QNetwork', q_network, args.prune_amount)
+            apply_pruning('TargetNetwork', target_network, args.prune_amount)
+
         # ALGO LOGIC: put action logic here
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
         if random.random() < epsilon:
@@ -250,6 +292,12 @@ poetry run pip install "stable_baselines3==2.0.0a1" "gymnasium[atari,accept-rom-
                     )
 
     if args.save_model:
+        print('removing prune masks...')
+        remove_pruning(q_network)
+        remove_pruning(target_network)
+        compare_sizes('QNetwork', q_network)
+        compare_sizes('TargetNetwork', target_network)
+
         model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
         torch.save(q_network.state_dict(), model_path)
         print(f"model saved to {model_path}")
