@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.utils.prune as prune #! Modification
 import tyro
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
@@ -32,6 +33,18 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = True
     """if toggled, cuda will be enabled by default"""
+
+    metal: bool = False #!: Modification!
+    """if toggled, metal will be enabled by default""" #!: Modification!
+    track: bool = False
+    """if toggled, this experiment will be tracked with Weights and Biases"""
+    prune: bool = False #!: Modification!
+    """if toggled, will prune the model for three times""" #!: Modification!
+    prune_amount: float = 0.0
+    """if toggled, will prune the model for three times"""
+    prune_method: str = "l1"
+    """chooses between l1 vs random"""
+
     track: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "cleanRL"
@@ -90,7 +103,7 @@ def make_env(env_id, idx, capture_video, run_name):
     def thunk():
         if capture_video and idx == 0:
             env = gym.make(env_id, render_mode="rgb_array")
-            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
+            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", episode_trigger=lambda episode_id: False) #!: Modification!
         else:
             env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -143,6 +156,18 @@ class Agent(nn.Module):
         return action, probs.log_prob(action), probs.entropy(), self.critic(hidden)
 
 
+def apply_pruning(model, prune_amount): #!: Modification!
+    print(f"Prune Amount: {prune_amount}")
+    # get all relevant layers while ignoring ReLU and Flatten
+    params_to_prune = [(module, 'weight') for module in model.network if isinstance(module, (nn.Conv2d, nn.Linear))]
+    print(f"Total non-zero parameters (before pruning): {sum(torch.sum(module.weight != 0).item() for module, _ in params_to_prune)}")
+    # prune globally with sparsity ratio
+    prune_method = prune.L1Unstructured if args.prune_method == "l1" else prune.RandomUnstructured
+    prune.global_unstructured(params_to_prune, pruning_method=prune.L1Unstructured, amount=prune_amount)
+    # remove weights to prevent 
+    print(f"Total non-zero parameters (after pruning: {sum(torch.sum(module.weight != 0).item() for module, _ in params_to_prune)}")
+
+
 if __name__ == "__main__":
     args = tyro.cli(Args)
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -174,6 +199,11 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    if args.metal and torch.backends.mps.is_available(): #!: Modification!
+        device = torch.device("mps") #!: Modification!
+        print("MPS device found.") #!: Modification!
+    else: #!: Modification!
+        print("MPS device not found.") #!: Modification!
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
@@ -201,6 +231,10 @@ if __name__ == "__main__":
 
     for iteration in range(1, args.num_iterations + 1):
         # Annealing the rate if instructed to do so.
+
+        if args.prune and iteration != 0 and iteration % (args.num_iterations // 2) == 0: #!: Modification!
+            apply_pruning(agent, args.prune_amount) #!: Modification!
+
         if args.anneal_lr:
             frac = 1.0 - (iteration - 1.0) / args.num_iterations
             lrnow = frac * args.learning_rate

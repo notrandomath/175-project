@@ -37,6 +37,8 @@ class Args:
     """if toggled, will prune the model for three times"""
     prune_amount: float = 0.0
     """if toggled, will prune the model for three times"""
+    prune_method: str = "l1"
+    """chooses between l1 vs random"""
     track: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "cleanRL"
@@ -150,6 +152,7 @@ def apply_pruning(name: str, model: nn.Module, prune_amount: float):
     params_to_prune = [(module, 'weight') for module in model.network if isinstance(module, (nn.Conv2d, nn.Linear))]
     print(f"Total non-zero parameters (before pruning) in {name}: {sum(torch.sum(module.weight != 0).item() for module, _ in params_to_prune)}")
     # prune globally with sparsity ratio
+    prune_method = prune.L1Unstructured if args.prune_method == "l1" else prune.RandomUnstructured
     prune.global_unstructured(params_to_prune, pruning_method=prune.L1Unstructured, amount=prune_amount)
     # remove weights to prevent 
     print(f"Total non-zero parameters (after pruning) in {name}: {sum(torch.sum(module.weight != 0).item() for module, _ in params_to_prune)}")
