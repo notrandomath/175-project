@@ -40,10 +40,10 @@ class Args:
     """if toggled, this experiment will be tracked with Weights and Biases"""
     prune: bool = False #!: Modification!
     """if toggled, will prune the model for three times""" #!: Modification!
-    prune_amount: float = 0.0
-    """if toggled, will prune the model for three times"""
-    prune_method: str = "l1"
-    """chooses between l1 vs random"""
+    prune_amount: float = 0.0 #!: Modification!
+    """if toggled, will prune the model for three times""" #!: Modification!
+    prune_method: str = "l1" #!: Modification!
+    """chooses between l1 vs random""" #!: Modification!
 
     track: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
@@ -53,6 +53,8 @@ class Args:
     """the entity (team) of wandb's project"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
+    save_model: bool = False
+    """whether to save model into the `runs/{run_name}` folder"""
 
     # Algorithm specific arguments
     env_id: str = "BreakoutNoFrameskip-v4"
@@ -89,6 +91,7 @@ class Args:
     """the maximum norm for the gradient clipping"""
     target_kl: float = None
     """the target KL divergence threshold"""
+    
 
     # to be filled in runtime
     batch_size: int = 0
@@ -103,7 +106,7 @@ def make_env(env_id, idx, capture_video, run_name):
     def thunk():
         if capture_video and idx == 0:
             env = gym.make(env_id, render_mode="rgb_array")
-            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", episode_trigger=lambda episode_id: False) #!: Modification!
+            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}") #!: Modification!
         else:
             env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -155,6 +158,10 @@ class Agent(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action), probs.entropy(), self.critic(hidden)
 
+def remove_pruning(model: nn.Module):
+    for module in model.network:
+        if isinstance(module, (nn.Conv2d, nn.Linear)) and hasattr(module, 'weight_mask'):
+            prune.remove(module, 'weight')
 
 def apply_pruning(model, prune_amount): #!: Modification!
     print(f"Prune Amount: {prune_amount}")
@@ -232,7 +239,7 @@ if __name__ == "__main__":
     for iteration in range(1, args.num_iterations + 1):
         # Annealing the rate if instructed to do so.
 
-        if args.prune and iteration != 0 and iteration % (args.num_iterations // 2) == 0: #!: Modification!
+        if args.prune and iteration != 0 and iteration % ((args.num_iterations+1) // 2) == 0: #!: Modification!
             apply_pruning(agent, args.prune_amount) #!: Modification!
 
         if args.anneal_lr:
@@ -358,6 +365,27 @@ if __name__ == "__main__":
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+
+    if args.save_model:
+        print('removing prune masks...')
+        remove_pruning(agent)
+
+        model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
+        torch.save(agent.state_dict(), model_path)
+        print(f"model saved to {model_path}")
+        from cleanrl_utils.evals.ppo_eval import evaluate
+
+        episodic_returns = evaluate(
+            model_path,
+            make_env,
+            args.env_id,
+            eval_episodes=10,
+            run_name=f"{run_name}-eval",
+            Model=Agent,
+            device=device,
+        )
+        for idx, episodic_return in enumerate(episodic_returns):
+            writer.add_scalar("eval/episodic_return", episodic_return, idx)
 
     envs.close()
     writer.close()

@@ -10,29 +10,15 @@ run_python_command () {
     --exp_name $1 \
     --env-id $env \
     --capture_video \
-    --total_timesteps 2000000 \
+    --total_timesteps 10000 \
     --track \
     --prune \
     --prune_amount $2 \
+    --prune_method "random" \
     --save_model
 }
 
-echo "Starting Baseline"
-echo run_python_command
-run_python_command "ppo_Baseline" 0 
-echo "Finished Baseline"
-
 echo "Starting L1 0.1"
 echo run_python_command
-run_python_command "ppo_L1_0.1" 0.1
+run_python_command "ppo_sanity"  0.1
 echo "Finished L1 0.1"
-
-echo "Starting L1 0.3"
-echo run_python_command
-run_python_command "ppo_L1_0.3" 0.3
-echo "Finished L1 0.3"
-
-echo "Starting L1 0.5"
-echo run_python_command
-run_python_command "ppo_L1_0.5" 0.5
-echo "Finished L1 0.5"

@@ -14,25 +14,21 @@ run_python_command () {
     --track \
     --prune \
     --prune_amount $2 \
+    --prune_method "random" \
     --save_model
 }
 
-echo "Starting Baseline"
+echo "Starting R 0.1"
 echo run_python_command
-run_python_command "ppo_Baseline" 0 
-echo "Finished Baseline"
+run_python_command "ppo_R_0.1" 0.1
+echo "Finished R 0.1"
 
-echo "Starting L1 0.1"
+echo "Starting R 0.3"
 echo run_python_command
-run_python_command "ppo_L1_0.1" 0.1
-echo "Finished L1 0.1"
+run_python_command "ppo_R_0.3" 0.3
+echo "Finished R 0.3"
 
-echo "Starting L1 0.3"
+echo "Starting R 0.5"
 echo run_python_command
-run_python_command "ppo_L1_0.3" 0.3
-echo "Finished L1 0.3"
-
-echo "Starting L1 0.5"
-echo run_python_command
-run_python_command "ppo_L1_0.5" 0.5
-echo "Finished L1 0.5"
+run_python_command "ppo_R_0.5" 0.5
+echo "Finished R 0.5"
